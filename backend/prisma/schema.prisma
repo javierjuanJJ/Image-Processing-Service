@@ -1,0 +1,50 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  password  String
+  images    Image[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("users")
+}
+
+model Image {
+  id          String         @id @default(uuid())
+  userId      String
+  user        User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  filename    String
+  mimeType    String
+  size        Int
+  width       Int?
+  height      Int?
+  storagePath String
+  variants    Json?
+  transforms  TransformLog[]
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@map("images")
+}
+
+model TransformLog {
+  id        String   @id @default(cuid())
+  imageId   String
+  image     Image    @relation(fields: [imageId], references: [id], onDelete: Cascade)
+  operation Json
+  status    String   @default("pending")
+  createdAt DateTime @default(now())
+
+  @@index([imageId])
+  @@map("transform_logs")
+}

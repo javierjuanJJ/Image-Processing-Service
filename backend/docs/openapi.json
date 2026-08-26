@@ -1,0 +1,562 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Image Processing Service API",
+    "version": "1.0.0",
+    "description": "API de gestión y procesamiento de imágenes tipo Cloudinary. Registro/login con JWT, carga de imágenes multipart, transformaciones on-demand con Sharp, detalle y listado paginado."
+  },
+  "servers": [{ "url": "/", "description": "Servidor actual" }],
+  "tags": [
+    { "name": "Auth", "description": "Registro y autenticación de usuarios" },
+    { "name": "Images", "description": "Carga, consulta, transformación y listado de imágenes" }
+  ],
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": { "type": "http", "scheme": "bearer", "bearerFormat": "JWT" }
+    },
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "required": ["error"],
+        "properties": {
+          "error": { "type": "string" },
+          "details": {}
+        }
+      },
+      "RegisterRequest": {
+        "type": "object",
+        "required": ["email", "password"],
+        "properties": {
+          "email": { "type": "string", "format": "email", "example": "ana@example.com" },
+          "password": { "type": "string", "format": "password", "minLength": 8, "example": "S3gura!2026" }
+        }
+      },
+      "LoginRequest": {
+        "type": "object",
+        "required": ["email", "password"],
+        "properties": {
+          "email": { "type": "string", "format": "email", "example": "ana@example.com" },
+          "password": { "type": "string", "format": "password", "example": "S3gura!2026" }
+        }
+      },
+      "LoginResponse": {
+        "type": "object",
+        "properties": {
+          "token": { "type": "string", "example": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..." },
+          "expiresIn": { "type": "string", "example": "1h" }
+        }
+      },
+      "UserCreated": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "email": { "type": "string" }
+        }
+      },
+      "ImageSummary": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "filename": { "type": "string" },
+          "mimeType": { "type": "string" },
+          "size": { "type": "integer", "description": "bytes del original" },
+          "width": { "type": "integer", "nullable": true },
+          "height": { "type": "integer", "nullable": true },
+          "url": { "type": "string", "description": "Ruta relativa para descargar el binario" },
+          "createdAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "VariantMeta": {
+        "type": "object",
+        "properties": {
+          "url": { "type": "string" },
+          "mimeType": { "type": "string" },
+          "size": { "type": "integer" },
+          "width": { "type": "integer", "nullable": true },
+          "height": { "type": "integer", "nullable": true }
+        }
+      },
+      "ImageDetail": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "filename": { "type": "string" },
+          "mimeType": { "type": "string" },
+          "size": { "type": "integer" },
+          "width": { "type": "integer", "nullable": true },
+          "height": { "type": "integer", "nullable": true },
+          "url": { "type": "string" },
+          "variants": {
+            "type": "object",
+            "additionalProperties": { "$ref": "#/components/schemas/VariantMeta" }
+          },
+          "createdAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "ImagePage": {
+        "type": "object",
+        "required": ["data", "pagination"],
+        "properties": {
+          "data": { "type": "array", "items": { "$ref": "#/components/schemas/ImageSummary" } },
+          "pagination": {
+            "type": "object",
+            "properties": {
+              "page": { "type": "integer" },
+              "limit": { "type": "integer" },
+              "total": { "type": "integer" },
+              "totalPages": { "type": "integer" }
+            }
+          }
+        }
+      },
+      "TransformRequest": {
+        "type": "object",
+        "minProperties": 1,
+        "properties": {
+          "resize": {
+            "type": "object",
+            "properties": {
+              "width": { "type": "integer", "minimum": 1, "maximum": 8000 },
+              "height": { "type": "integer", "minimum": 1, "maximum": 8000 },
+              "fit": { "type": "string", "enum": ["cover", "contain", "fill", "inside", "outside"], "default": "cover" }
+            },
+            "anyOf": [{ "required": ["width"] }, { "required": ["height"] }]
+          },
+          "crop": {
+            "type": "object",
+            "required": ["left", "top", "width", "height"],
+            "properties": {
+              "left": { "type": "integer", "minimum": 0 },
+              "top": { "type": "integer", "minimum": 0 },
+              "width": { "type": "integer", "minimum": 1 },
+              "height": { "type": "integer", "minimum": 1 }
+            }
+          },
+          "rotate": { "type": "integer", "enum": [0, 90, 180, 270] },
+          "filters": {
+            "type": "object",
+            "properties": {
+              "grayscale": { "type": "boolean" },
+              "sepia": { "type": "boolean" }
+            }
+          },
+          "format": { "type": "string", "enum": ["jpeg", "png", "webp", "avif", "gif"] }
+        }
+      },
+      "ImageVariant": {
+        "type": "object",
+        "properties": {
+          "imageId": { "type": "string", "format": "uuid" },
+          "variantId": { "type": "string" },
+          "url": { "type": "string" },
+          "mimeType": { "type": "string" },
+          "size": { "type": "integer" },
+          "width": { "type": "integer", "nullable": true },
+          "height": { "type": "integer", "nullable": true },
+          "appliedTransforms": { "type": "array", "items": { "type": "string" } }
+        }
+      },
+      "AcceptedTransform": {
+        "type": "object",
+        "properties": {
+          "status": { "type": "string", "const": "pending" },
+          "transformId": { "type": "string" }
+        }
+      }
+    },
+    "responses": {
+      "BadRequest": {
+        "description": "Payload inválido (Zod)",
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/Error" },
+            "examples": {
+              "invalidPassword": {
+                "value": {
+                  "error": "Invalid request",
+                  "details": [{ "path": ["password"], "message": "min 8 chars" }]
+                }
+              }
+            }
+          }
+        }
+      },
+      "Unauthorized": {
+        "description": "Token ausente/inválido/expirado",
+        "content": {
+          "application/json": {
+            "example": { "error": "Unauthorized" }
+          }
+        }
+      },
+      "NotFound": {
+        "description": "Recurso inexistente o sin permiso (sin filtrar existencia)",
+        "content": {
+          "application/json": {
+            "example": { "error": "Image not found" }
+          }
+        }
+      }
+    }
+  },
+  "paths": {
+    "/api/v1/register": {
+      "post": {
+        "summary": "Registra un nuevo usuario",
+        "tags": ["Auth"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/RegisterRequest" }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Usuario creado",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/UserCreated" },
+                "example": { "id": "b3c1d9e0-7f2a-4c8e-9a11-0d5f6a2b8c90", "email": "ana@example.com" }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "409": {
+            "description": "Email ya registrado",
+            "content": {
+              "application/json": { "example": { "error": "Email already registered" } }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/login": {
+      "post": {
+        "summary": "Autentica un usuario y devuelve un JWT",
+        "tags": ["Auth"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/LoginRequest" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Token emitido",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/LoginResponse" }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": {
+            "description": "Credenciales inválidas",
+            "content": {
+              "application/json": { "example": { "error": "Invalid credentials" } }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/images": {
+      "post": {
+        "summary": "Sube una imagen",
+        "tags": ["Images"],
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "required": ["image"],
+                "properties": {
+                  "image": {
+                    "type": "string",
+                    "format": "binary",
+                    "description": "Campo file del form-data"
+                  },
+                  "filename": {
+                    "type": "string",
+                    "description": "Opcional; si se omite se usa el original sanitizado"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Imagen registrada",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ImageSummary" },
+                "example": {
+                  "id": "b3c1d9e0-7f2a-4c8e-9a11-0d5f6a2b8c90",
+                  "filename": "foto-playa.jpg",
+                  "mimeType": "image/jpeg",
+                  "size": 482113,
+                  "width": 1920,
+                  "height": 1080,
+                  "url": "/api/v1/images/b3c1d9e0-7f2a-4c8e-9a11-0d5f6a2b8c90/file",
+                  "createdAt": "2026-08-26T10:00:00.000Z"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Archivo ausente, mime no permitido o contenido inválido",
+            "content": {
+              "application/json": {
+                "examples": {
+                  "noFile": { "value": { "error": "No image file provided" } },
+                  "badMime": { "value": { "error": "Unsupported image type", "details": ["image/pdf"] } },
+                  "badContent": { "value": { "error": "Invalid image content" } }
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "413": {
+            "description": "Archivo excede el tamaño máximo",
+            "content": {
+              "application/json": {
+                "example": { "error": "File too large", "details": ["10MB max"] }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "summary": "Lista paginada de imágenes del usuario",
+        "tags": ["Images"],
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          { "name": "page", "in": "query", "schema": { "type": "integer", "minimum": 1, "default": 1 } },
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "minimum": 1, "maximum": 50, "default": 10 } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Página de imágenes ordenada por createdAt DESC",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ImagePage" },
+                "example": {
+                  "data": [
+                    {
+                      "id": "b3c1d9e0-7f2a-4c8e-9a11-0d5f6a2b8c90",
+                      "filename": "foto-playa.jpg",
+                      "mimeType": "image/jpeg",
+                      "size": 482113,
+                      "width": 1920,
+                      "height": 1080,
+                      "url": "/api/v1/images/b3c1d9e0-7f2a-4c8e-9a11-0d5f6a2b8c90/file",
+                      "createdAt": "2026-08-26T10:00:00.000Z"
+                    }
+                  ],
+                  "pagination": { "page": 1, "limit": 10, "total": 23, "totalPages": 3 }
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+    "/api/v1/images/{id}": {
+      "get": {
+        "summary": "Detalle de una imagen",
+        "tags": ["Images"],
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Metadatos de la imagen",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ImageDetail" },
+                "example": {
+                  "id": "b3c1d9e0-7f2a-4c8e-9a11-0d5f6a2b8c90",
+                  "filename": "foto-playa.jpg",
+                  "mimeType": "image/jpeg",
+                  "size": 482113,
+                  "width": 1920,
+                  "height": 1080,
+                  "url": "/api/v1/images/b3c1d9e0-7f2a-4c8e-9a11-0d5f6a2b8c90/file",
+                  "variants": {
+                    "v_7d2c8a": {
+                      "url": "/api/v1/images/b3c1d9e0-7f2a-4c8e-9a11-0d5f6a2b8c90/variants/v_7d2c8a",
+                      "mimeType": "image/webp",
+                      "size": 51240,
+                      "width": 300,
+                      "height": 300
+                    }
+                  },
+                  "createdAt": "2026-08-26T10:00:00.000Z"
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/api/v1/images/{id}/file": {
+      "get": {
+        "summary": "Descarga el binario original",
+        "tags": ["Images"],
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
+          {
+            "name": "download",
+            "in": "query",
+            "schema": { "type": "string", "enum": ["1"] },
+            "description": "?download=1 fuerza Content-Disposition: attachment"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Binario de la imagen con Content-Type correcto y Cache-Control private max-age=3600",
+            "headers": {
+              "Content-Disposition": {
+                "description": "Presente solo con ?download=1: attachment; filename=\"...\"",
+                "schema": { "type": "string" }
+              }
+            },
+            "content": {
+              "image/png": { "schema": { "type": "string", "format": "binary" } },
+              "image/jpeg": { "schema": { "type": "string", "format": "binary" } },
+              "image/webp": { "schema": { "type": "string", "format": "binary" } },
+              "image/gif": { "schema": { "type": "string", "format": "binary" } },
+              "image/avif": { "schema": { "type": "string", "format": "binary" } }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "404": {
+            "description": "Imagen ajena/inexistente (Image not found) o binario ausente en disco (File missing)",
+            "content": {
+              "application/json": {
+                "examples": {
+                  "notFound": { "value": { "error": "Image not found" } },
+                  "fileMissing": { "value": { "error": "File missing" } }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/images/{id}/transform": {
+      "post": {
+        "summary": "Aplica una transformación y crea una variante",
+        "tags": ["Images"],
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/TransformRequest" },
+              "examples": {
+                "resizeWebp": {
+                  "value": { "resize": { "width": 300, "height": 300, "fit": "cover" }, "format": "webp" }
+                },
+                "cropGrayscale": {
+                  "value": { "crop": { "left": 10, "top": 10, "width": 500, "height": 500 }, "filters": { "grayscale": true } }
+                },
+                "rotateSepiaJpeg": {
+                  "value": { "rotate": 90, "filters": { "sepia": true }, "format": "jpeg" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Variante creada (procesamiento síncrono) o reutilizada por idempotencia",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ImageVariant" },
+                "example": {
+                  "imageId": "b3c1d9e0-7f2a-4c8e-9a11-0d5f6a2b8c90",
+                  "variantId": "v_7d2c8a",
+                  "url": "/api/v1/images/b3c1d9e0-7f2a-4c8e-9a11-0d5f6a2b8c90/variants/v_7d2c8a",
+                  "mimeType": "image/webp",
+                  "size": 51240,
+                  "width": 300,
+                  "height": 300,
+                  "appliedTransforms": ["resize", "format"]
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Transformación aceptada (modo cola activo con QUEUE_ENABLED=true)",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/AcceptedTransform" },
+                "example": { "status": "pending", "transformId": "clx9f2..." }
+              }
+            }
+          },
+          "400": {
+            "description": "Payload inválido, sin transformaciones o crop fuera de límites",
+            "content": {
+              "application/json": {
+                "examples": {
+                  "empty": { "value": { "error": "Invalid request", "details": [{ "message": "at least one transformation is required" }] } },
+                  "cropOutOfBounds": { "value": { "error": "Crop out of bounds" } }
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/api/v1/images/{id}/variants/{variantId}": {
+      "get": {
+        "summary": "Descarga una variante transformada",
+        "tags": ["Images"],
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
+          { "name": "variantId", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Binario de la variante",
+            "content": {
+              "application/octet-stream": { "schema": { "type": "string", "format": "binary" } }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "404": {
+            "description": "Imagen o variante inexistente / sin permiso",
+            "content": {
+              "application/json": {
+                "examples": {
+                  "notFound": { "value": { "error": "Image not found" } },
+                  "variantNotFound": { "value": { "error": "Variant not found" } }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

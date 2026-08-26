@@ -1,0 +1,37 @@
+# Dependencies
+node_modules/
+vendor/
+
+# Environment & secrets
+.env
+.env.*
+!.env.example
+*.local
+
+# opencode (contiene API key)
+opencode.json
+
+# Logs
+*.log
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Build / cache
+dist/
+build/
+__pycache__/
+*.pyc
+.cache/
+tmp/
+
+# Uploads de imágenes (runtime)
+uploads/
+uploads-test/
