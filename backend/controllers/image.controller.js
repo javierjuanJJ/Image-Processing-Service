@@ -1,12 +1,13 @@
 import { randomUUID } from 'node:crypto'
-import { mkdir, stat, unlink, writeFile } from 'node:fs/promises'
-import path from 'node:path'
 import { imageModel } from '../models/image.model.js'
 import { sharpService } from '../services/sharp.service.js'
+import { storageService } from '../services/storage.service.js'
 import { queueService } from '../services/queue.service.js'
 import { transformModel } from '../models/transform.model.js'
 import { validateImage } from '../schemas/image.schema.js'
 import { config } from '../config.js'
+
+const { joinKey } = storageService
 
 const sanitizeFilename = (name) => {
   const s = String(name ?? '')
@@ -54,16 +55,14 @@ export const imageController = {
 
     const id = randomUUID()
     const now = new Date()
-    const relPath = path.join(
+    const relPath = joinKey(
       String(now.getFullYear()),
       String(now.getMonth() + 1).padStart(2, '0'),
       `${id}${meta.ext}`
     )
-    const absPath = path.resolve(config.uploadsDir, relPath)
 
     try {
-      await mkdir(path.dirname(absPath), { recursive: true })
-      await writeFile(absPath, req.file.buffer)
+      await storageService.upload(relPath, req.file.buffer, meta.mimeType)
 
       const image = await imageModel.create({
         userId: req.user.sub,
@@ -86,7 +85,7 @@ export const imageController = {
         createdAt: image.createdAt
       })
     } catch (err) {
-      await unlink(absPath).catch(() => {})
+      await storageService.delete(relPath).catch(() => {})
       throw err
     }
   },
@@ -153,21 +152,20 @@ export const imageController = {
       return res.status(404).json({ error: 'Image not found' })
     }
 
-    const absPath = path.resolve(config.uploadsDir, image.storagePath)
-
+    let buffer
     try {
-      await stat(absPath)
+      buffer = await storageService.download(image.storagePath)
     } catch {
       return res.status(404).json({ error: 'File missing' })
     }
 
     res.setHeader('Content-Type', image.mimeType)
-    res.setHeader('Content-Length', image.size)
+    res.setHeader('Content-Length', buffer.byteLength)
     res.setHeader('Cache-Control', 'private, max-age=3600')
     if (req.query.download === '1') {
       res.setHeader('Content-Disposition', `attachment; filename="${image.filename}"`)
     }
-    return res.sendFile(absPath)
+    return res.send(buffer)
   },
 
   async getVariantFile(req, res) {
@@ -179,15 +177,20 @@ export const imageController = {
     const v = image.variants?.[req.params.variantId]
     if (!v) return res.status(404).json({ error: 'Variant not found' })
 
-    const absPath = path.resolve(config.uploadsDir, v.path)
+    let buffer
     try {
-      await stat(absPath)
+      buffer = await storageService.download(v.path)
     } catch {
       return res.status(404).json({ error: 'File missing' })
     }
 
     res.setHeader('Content-Type', v.mimeType)
-    return res.sendFile(absPath)
+    res.setHeader('Content-Length', buffer.byteLength)
+    res.setHeader('Cache-Control', 'private, max-age=3600')
+    if (req.query.download === '1') {
+      res.setHeader('Content-Disposition', `attachment; filename="${image.filename}"`)
+    }
+    return res.send(buffer)
   },
 
   async transform(req, res) {
@@ -226,7 +229,7 @@ export const imageController = {
     try {
       await imageModel.addVariant({ imageId: image.id, variantId, variant })
     } catch (err) {
-      await unlink(path.resolve(config.uploadsDir, variant.path)).catch(() => {})
+      await storageService.delete(variant.path).catch(() => {})
       throw err
     }
 

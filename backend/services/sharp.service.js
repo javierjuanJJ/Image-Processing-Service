@@ -1,8 +1,8 @@
 import sharp from 'sharp'
 import { createHash } from 'node:crypto'
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
-import path from 'node:path'
-import { config } from '../config.js'
+import { storageService } from './storage.service.js'
+
+const { joinKey } = storageService
 
 export const EXT_BY_FORMAT = { jpeg: '.jpg', png: '.png', webp: '.webp', avif: '.avif', gif: '.gif' }
 export const MIME_BY_FORMAT = {
@@ -78,17 +78,15 @@ export const sharpService = {
   },
 
   async buildVariant(image, transforms) {
-    const buffer = await readFile(path.resolve(config.uploadsDir, image.storagePath))
+    const buffer = await storageService.download(image.storagePath)
     const result = await sharpService.transform(buffer, transforms)
 
-    const relPath = path.join(
-      ...image.storagePath.split(path.sep).slice(0, 2),
+    const relPath = joinKey(
+      ...image.storagePath.split('/').slice(0, 2),
       image.id,
       `${sharpService.variantIdFor(image.id, transforms)}${result.ext ?? ''}`
     )
-    const absPath = path.resolve(config.uploadsDir, relPath)
-    await mkdir(path.dirname(absPath), { recursive: true })
-    await writeFile(absPath, result.data)
+    await storageService.upload(relPath, result.data, result.mimeType ?? image.mimeType)
 
     return {
       path: relPath,

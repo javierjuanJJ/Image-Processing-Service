@@ -20,5 +20,18 @@ export const config = {
   },
   uploadsDir: process.env.UPLOADS_DIR ?? 'uploads',
   queueEnabled: process.env.QUEUE_ENABLED === 'true',
-  rabbitUrl: process.env.RABBIT_URL ?? 'amqp://localhost'
+  rabbitUrl: process.env.RABBIT_URL ?? 'amqp://localhost',
+
+  storage: {
+    // disk | s3 | r2 | gcs
+    provider: process.env.STORAGE_PROVIDER ?? 'disk',
+    bucket: process.env.STORAGE_BUCKET ?? '',
+    // S3 / R2
+    region: process.env.STORAGE_REGION ?? 'us-east-1',
+    endpoint: process.env.STORAGE_ENDPOINT ?? '',
+    accessKeyId: process.env.STORAGE_ACCESS_KEY_ID ?? '',
+    secretAccessKey: process.env.STORAGE_SECRET_ACCESS_KEY ?? '',
+    // GCS
+    keyFilename: process.env.STORAGE_KEY_FILENAME ?? ''
+  }
 }
