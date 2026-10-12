@@ -31,6 +31,34 @@ npm run dev                   # http://localhost:3000
 
 Requiere PostgreSQL accesible vía `DATABASE_URL`. La migración inicial está versionada en `backend/prisma/migrations/`.
 
+## Docker (API + microservicios)
+
+```bash
+cp .env.example .env          # opcional: ajusta JWT_SECRET, puertos, etc.
+docker compose up --build
+```
+
+Servicios que levanta la pila:
+
+| Servicio | Descripción | Puerto |
+|---|---|---|
+| `api` | API Express (aplica migraciones y sirve `/api/v1` y `/docs`) | `3000` |
+| `worker` | Consumidor de la cola `image.transforms` | — |
+| `postgres` | Base de datos de metadatos | `5432` |
+| `rabbitmq` | Cola de transformaciones asíncronas (+ consola de gestión) | `5672` / `15672` |
+| `floci` | Emulador local de AWS con **S3** en `http://localhost:4566` | `4566` |
+| `floci-init` | Job one-shot que crea el bucket S3 al arrancar | — |
+
+Por defecto el almacenamiento apunta al **S3 emulado por Floci** (`STORAGE_PROVIDER=s3`,
+`STORAGE_ENDPOINT=http://floci:4566`, credenciales `test`/`test`). Para usar disco local,
+pon `STORAGE_PROVIDER=disk` en `.env`.
+
+```bash
+# Inspeccionar el bucket emulado
+AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test \
+  aws --endpoint-url http://localhost:4566 s3 ls s3://image-processing
+```
+
 ## Tests e2e
 
 ```bash

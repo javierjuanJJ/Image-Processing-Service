@@ -1,0 +1,20 @@
+node_modules
+npm-debug.log
+.dockerignore
+Dockerfile
+
+# Entorno y secretos
+.env
+.env.*
+!.env.example
+
+# Runtime / artefactos
+uploads
+uploads-test
+coverage
+*.log
+
+# Tests y archivos no necesarios en la imagen
+app.test.js
+.git
+.gitignore

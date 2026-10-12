@@ -1,0 +1,189 @@
+name: image-processing-service
+
+# ---------------------------------------------------------------------------
+# Valores compartidos por API y worker.
+# Sobrescríbelos creando un archivo .env junto a este docker-compose.yml
+# (usa .env.example como plantilla).
+# ---------------------------------------------------------------------------
+x-app-environment: &app-environment
+  NODE_ENV: production
+  DATABASE_URL: ${DATABASE_URL:-postgresql://postgres:postgres@postgres:5432/image_processing?schema=public}
+  JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
+  JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-1h}
+  CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173}
+  QUEUE_ENABLED: ${QUEUE_ENABLED:-true}
+  RABBIT_URL: ${RABBIT_URL:-amqp://guest:guest@rabbitmq:5672}
+  # Por defecto apunta al S3 emulado por Floci. Pon STORAGE_PROVIDER=disk
+  # (y limpia el endpoint) para volver al almacenamiento local.
+  STORAGE_PROVIDER: ${STORAGE_PROVIDER:-s3}
+  STORAGE_BUCKET: ${STORAGE_BUCKET:-image-processing}
+  STORAGE_REGION: ${STORAGE_REGION:-us-east-1}
+  STORAGE_ENDPOINT: ${STORAGE_ENDPOINT:-http://floci:4566}
+  STORAGE_ACCESS_KEY_ID: ${STORAGE_ACCESS_KEY_ID:-test}
+  STORAGE_SECRET_ACCESS_KEY: ${STORAGE_SECRET_ACCESS_KEY:-test}
+  STORAGE_KEY_FILENAME: ${STORAGE_KEY_FILENAME:-}
+  UPLOADS_DIR: /app/uploads
+
+services:
+  # -------------------------------------------------------------------------
+  # API HTTP (Express). Aplica migraciones y sirve /api/v1 y /docs.
+  # -------------------------------------------------------------------------
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: image-processing-api:latest
+    environment:
+      <<: *app-environment
+      PORT: "3000"
+      RUN_MIGRATIONS: "true"
+    ports:
+      - "${API_PORT:-3000}:3000"
+    volumes:
+      - uploads:/app/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      floci:
+        condition: service_started
+      floci-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3000/docs').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 15s
+      timeout: 5s
+      start_period: 30s
+      retries: 5
+    restart: unless-stopped
+
+  # -------------------------------------------------------------------------
+  # Worker de transformaciones (consume la cola image.transforms).
+  # Reutiliza la misma imagen de la API con otro comando.
+  # -------------------------------------------------------------------------
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: image-processing-api:latest
+    command: ["node", "workers/transform.worker.js"]
+    environment:
+      <<: *app-environment
+      RUN_MIGRATIONS: "false"
+    volumes:
+      - uploads:/app/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+      floci-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  # -------------------------------------------------------------------------
+  # PostgreSQL: base de datos de metadatos.
+  # -------------------------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-image_processing}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-image_processing}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  # -------------------------------------------------------------------------
+  # RabbitMQ: cola de transformaciones asíncronas (QUEUE_ENABLED=true).
+  # Consola de gestión en http://localhost:15672
+  # -------------------------------------------------------------------------
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-guest}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASS:-guest}
+    ports:
+      - "${RABBITMQ_PORT:-5672}:5672"
+      - "${RABBITMQ_MANAGEMENT_PORT:-15672}:15672"
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    restart: unless-stopped
+
+  # -------------------------------------------------------------------------
+  # Floci: emulador local de AWS. Expone S3 (entre otros) en el puerto 4566,
+  # simulando el almacenamiento en la nube sin credenciales reales.
+  #   Endpoint S3: http://localhost:4566  (host) / http://floci:4566 (red)
+  #   Health:      http://localhost:4566/_floci/health
+  # -------------------------------------------------------------------------
+  floci:
+    image: floci/floci:latest
+    hostname: floci
+    environment:
+      FLOCI_HOSTNAME: floci
+      FLOCI_STORAGE_MODE: ${FLOCI_STORAGE_MODE:-persistent}
+      FLOCI_STORAGE_PERSISTENT_PATH: /app/data
+    ports:
+      - "${FLOCI_PORT:-4566}:4566"
+    volumes:
+      - floci-data:/app/data
+    healthcheck:
+      # La imagen estándar solo trae bash + coreutils (sin curl/wget),
+      # así que comprobamos el puerto con la redirección TCP de bash.
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/4566' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    restart: unless-stopped
+
+  # -------------------------------------------------------------------------
+  # Inicializador de almacenamiento: espera a Floci y crea el bucket S3.
+  # Se ejecuta una sola vez y termina (los servicios dependen de su éxito).
+  # -------------------------------------------------------------------------
+  floci-init:
+    image: amazon/aws-cli:latest
+    depends_on:
+      floci:
+        condition: service_started
+    environment:
+      AWS_ACCESS_KEY_ID: ${STORAGE_ACCESS_KEY_ID:-test}
+      AWS_SECRET_ACCESS_KEY: ${STORAGE_SECRET_ACCESS_KEY:-test}
+      AWS_DEFAULT_REGION: ${STORAGE_REGION:-us-east-1}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        until aws --endpoint-url http://floci:4566 s3 ls >/dev/null 2>&1; do
+          echo "esperando a floci en http://floci:4566 ..."
+          sleep 2
+        done
+        aws --endpoint-url http://floci:4566 s3 mb "s3://${STORAGE_BUCKET:-image-processing}" >/dev/null 2>&1 || true
+        echo "bucket disponible:"
+        aws --endpoint-url http://floci:4566 s3 ls
+    restart: "no"
+
+volumes:
+  postgres-data:
+  uploads:
+  rabbitmq-data:
+  floci-data:
