@@ -29,10 +29,7 @@ services:
   # API HTTP (Express). Aplica migraciones y sirve /api/v1 y /docs.
   # -------------------------------------------------------------------------
   api:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
-    image: image-processing-api:latest
+    image: jjal20021998/image-processing-api:latest
     environment:
       <<: *app-environment
       PORT: "3000"
@@ -67,10 +64,7 @@ services:
   # Reutiliza la misma imagen de la API con otro comando.
   # -------------------------------------------------------------------------
   worker:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
-    image: image-processing-api:latest
+    image: jjal20021998/image-processing-api:latest
     command: ["node", "workers/transform.worker.js"]
     environment:
       <<: *app-environment
