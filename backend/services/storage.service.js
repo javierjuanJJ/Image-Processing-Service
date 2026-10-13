@@ -191,5 +191,5 @@ export const storageService = {
   exists: (relPath) => provider.exists(relPath),
 
   /** Helper: build a relative key from parts (always forward slashes) */
-  key: joinKey
+  joinKey
 }

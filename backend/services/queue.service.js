@@ -15,9 +15,13 @@ async function withChannel(fn) {
 export const queueService = {
   publishTransform(payload) {
     return withChannel(async conn => {
-      const ch = await conn.createChannel()
+      // Canal con publisher confirms: sendToQueue es fire-and-forget, así que
+      // esperamos la confirmación del broker antes de cerrar la conexión.
+      // Si cerramos antes, el mensaje se pierde silenciosamente.
+      const ch = await conn.createConfirmChannel()
       await ch.assertQueue(QUEUE, { durable: true })
       ch.sendToQueue(QUEUE, Buffer.from(JSON.stringify(payload)), { persistent: true })
+      await ch.waitForConfirms()
     })
   },
 

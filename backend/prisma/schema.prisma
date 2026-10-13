@@ -1,5 +1,9 @@
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
+  // El runtime (node:22-bookworm-slim) usa OpenSSL 3.0. Fijamos el target
+  // explícitamente para que `prisma generate` descargue el query engine
+  // compatible también cuando se construye la imagen en otro host.
+  binaryTargets = ["native", "debian-openssl-3.0.x"]
 }
 
 datasource db {
